@@ -20,6 +20,7 @@ namespace ExpressBase.FileWeb
         public static IWebHostBuilder CreateWebHostBuilder(string[] args) =>
             WebHost.CreateDefaultBuilder(args)
                 .UseStartup<Startup>()
+                .UseContentRoot(Directory.GetCurrentDirectory())
                 .UseKestrel(options =>
                 {
                     options.Limits.KeepAliveTimeout = TimeSpan.FromMinutes(5);
