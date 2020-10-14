@@ -3,6 +3,7 @@ using ExpressBase.Common.ServiceClients;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
+using System;
 
 namespace ExpressBase.Web.BaseControllers
 {
@@ -29,10 +30,13 @@ namespace ExpressBase.Web.BaseControllers
 
         public override void OnActionExecuted(ActionExecutedContext context)
         {
+            Console.WriteLine("On ActionExecutedContext");
 
-            if (this.FileClient != null)
-                if (!string.IsNullOrEmpty(this.FileClient.BearerToken))
-                    Response.Cookies.Append(RoutingConstants.BEARER_TOKEN, this.FileClient.BearerToken, new CookieOptions());
+            if (!string.IsNullOrEmpty(this.FileClient.BearerToken))
+            {
+                Console.WriteLine("Bear Token Refreshed");
+                Response.Cookies.Append(RoutingConstants.BEARER_TOKEN, this.FileClient.BearerToken, new CookieOptions());
+            }
 
             base.OnActionExecuted(context);
         }
