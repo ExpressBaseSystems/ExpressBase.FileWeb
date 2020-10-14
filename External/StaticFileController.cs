@@ -266,7 +266,7 @@ namespace ExpressBase.FileWeb.Controllers
             {
                 dfq.ImageInfo = new ImageMeta { FileRefId = Convert.ToInt32(filename.SplitOnLast(CharConstants.DOT).First()), FileCategory = EbFileCategory.Images, ImageQuality = ImageQuality.original };
                 
-                Console.WriteLine("Image Info: " + dfq.ImageInfo.ToString());
+                Console.WriteLine("Image Info: " + dfq.ImageInfo.ToJson());
 
                 dfs = this.FileClient.Get<DownloadFileResponse>(dfq);
 
@@ -299,7 +299,7 @@ namespace ExpressBase.FileWeb.Controllers
             {
                 dfq.ImageInfo = new ImageMeta { FileRefId = Convert.ToInt32(filename.SplitOnLast(CharConstants.DOT).First()), FileCategory = EbFileCategory.Images, ImageQuality = Enum.Parse<ImageQuality>(qlty) };
                 
-                Console.WriteLine("Image Info: " + dfq.ImageInfo.ToString());
+                Console.WriteLine("Image Info: " + dfq.ImageInfo.ToJson());
 
                 this.FileClient.Timeout = new TimeSpan(0, 5, 0);
 
