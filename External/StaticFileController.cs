@@ -248,7 +248,7 @@ namespace ExpressBase.FileWeb.Controllers
             }
             catch (Exception e)
             {
-                Console.WriteLine("Exception: " + e.Message.ToString());
+                Console.WriteLine("Exception: " + e.StackTrace.ToString() + e.Message.ToString());
             }
             return resp;
         }
@@ -281,7 +281,7 @@ namespace ExpressBase.FileWeb.Controllers
             }
             catch (Exception e)
             {
-                Console.WriteLine("Exception: " + e.Message.ToString());
+                Console.WriteLine("Exception: " + e.StackTrace.ToString() + e.Message.ToString());
             }
             return resp;
         }
@@ -315,7 +315,7 @@ namespace ExpressBase.FileWeb.Controllers
             }
             catch (Exception e)
             {
-                Console.WriteLine("Exception: " + e.Message.ToString());
+                Console.WriteLine("Exception: " + e.StackTrace.ToString() + e.Message.ToString());
             }
             return resp;
 
