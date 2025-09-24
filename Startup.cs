@@ -27,13 +27,13 @@ namespace ExpressBase.FileWeb
 
             services.AddHttpClient<EbStaticFileClient2>();
 
-            // var redisServer = Environment.GetEnvironmentVariable(EnvironmentConstants.EB_REDIS_SERVER);
+            var redisServer = Environment.GetEnvironmentVariable(EnvironmentConstants.EB_REDIS_SERVER);
             var redisPassword = Environment.GetEnvironmentVariable(EnvironmentConstants.EB_REDIS_PASSWORD);
             var redisPort = Environment.GetEnvironmentVariable(EnvironmentConstants.EB_REDIS_PORT);
-            //var redisConnectionString = string.Format("redis://{0}@{1}:{2}", redisPassword, redisServer, redisPort);
+            var redisConnectionString = string.Format("redis://{0}@{1}:{2}", redisPassword, redisServer, redisPort);
 
-            var redisServer = "127.0.0.1";
-            string redisConnectionString = string.Format("redis://{0}:{1}", redisServer, redisPort);
+            //var redisServer = "127.0.0.1";
+            //string redisConnectionString = string.Format("redis://{0}:{1}", redisServer, redisPort);
 
             var redisManager = new RedisManagerPool(redisConnectionString);
             services.AddScoped<IRedisClient, IRedisClient>(serviceProvider =>
