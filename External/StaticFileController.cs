@@ -2,47 +2,69 @@
 using ExpressBase.Common.Constants;
 using ExpressBase.Common.EbServiceStack.ReqNRes;
 using ExpressBase.Common.Enums;
+using ExpressBase.Common.LocationNSolution;
 using ExpressBase.Common.ServiceClients;
+using ExpressBase.Common.WebApi.RequestNResponse;
 using ExpressBase.Web.BaseControllers;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Net.Http.Headers;
 using ServiceStack;
+using ServiceStack.Redis;
 using System;
+using System.IO;
 using System.Linq;
 
 namespace ExpressBase.FileWeb.Controllers
 {
     public class StaticFileExtController : EbFileBaseController
     {
-        public StaticFileExtController(IEbStaticFileClient _sfc) : base(_sfc) { }
+        public StaticFileExtController(IEbStaticFileClient _sfc, EbStaticFileClient2 _sfc2, IRedisClient _redis, PooledRedisClientManager pooledRedisManager) : base(_sfc, _sfc2, _redis, pooledRedisManager) { }
+
+        public bool IsNewFileServer => !string.IsNullOrEmpty(IntSolutionId) && (GetSolutionObject(IntSolutionId)?.SolutionSettings?.EnableNewFileServer ?? false);
 
         [HttpGet("images/logo/{solnid}")]
         public IActionResult GetLogo(string solnid)
         {
             solnid = solnid.SplitOnLast(CharConstants.DOT).First() + StaticFileConstants.DOTPNG;
-            DownloadFileResponse dfs = null;
             ActionResult resp = new EmptyResult();
 
-            try
+            if (IsNewFileServer)
             {
-
-                HttpContext.Response.Headers[HeaderNames.CacheControl] = "private, max-age=2628000";
-
-                dfs = this.FileClient.Get<DownloadFileResponse>
-                        (new DownloadLogoExtRequest
-                        {
-                            SolnId = solnid.Split(CharConstants.DOT)[0],
-                        });
-                if (dfs.StreamWrapper != null)
+                DownloadFileResponse2 dfs = this.FileClient2.DownloadLogo(solnid);
+                if (dfs?.FileBytes != null)
                 {
-                    dfs.StreamWrapper.Memorystream.Position = 0;
-                    resp = new FileStreamResult(dfs.StreamWrapper.Memorystream, GetMime(solnid));
+                    MemoryStream ms = new MemoryStream(dfs.FileBytes);
+                    ms.Position = 0;
+                    resp = new FileStreamResult(ms, StaticFileConstants.GetMimeType(solnid));
+                }
+                else if (dfs?.PreSignedUrl != null)
+                {
+                    resp = Redirect(dfs.PreSignedUrl);
                 }
             }
-            catch (Exception e)
+            else
             {
-                Console.WriteLine("Exception: " + e.Message.ToString());
+                DownloadFileResponse dfs = null;
+                try
+                {
+                    dfs = this.FileClient.Get<DownloadFileResponse>
+                            (new DownloadLogoExtRequest
+                            {
+                                SolnId = solnid.Split(CharConstants.DOT)[0],
+                            });
+                    if (dfs.StreamWrapper != null)
+                    {
+                        dfs.StreamWrapper.Memorystream.Position = 0;
+                        resp = new FileStreamResult(dfs.StreamWrapper.Memorystream, GetMime(solnid));
+                    }
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine("Exception: " + e.Message.ToString());
+                }
             }
+
+            HttpContext.Response.Headers[HeaderNames.CacheControl] = "private, max-age=2628000";
             return resp;
         }
 
@@ -117,208 +139,322 @@ namespace ExpressBase.FileWeb.Controllers
 
     public class StaticFileController : EbFileBaseController
     {
-        public StaticFileController( IEbStaticFileClient _sfc) : base(_sfc) { }
+        public StaticFileController(IEbStaticFileClient _sfc, EbStaticFileClient2 _sfc2, IRedisClient _redis, PooledRedisClientManager pooledRedisManager) : base(_sfc, _sfc2, _redis, pooledRedisManager) { }
 
-        private const string UnderScore = "_";
-
-        private const string RejexPattern = " *[\\~#%&*{}/:<>?|\"-]+ *";
+        public bool IsNewFileServer => !string.IsNullOrEmpty(IntSolutionId) && (GetSolutionObject(IntSolutionId)?.SolutionSettings?.EnableNewFileServer ?? false);
 
         [HttpGet("images/dp/{userid}")]
         public IActionResult GetDP(string userid)
         {
             string uid = userid.Split(CharConstants.DOT).First();
+            string filetype = userid.Split(CharConstants.DOT).Last();
             string fname = userid.SplitOnLast(CharConstants.DOT).First() + StaticFileConstants.DOTPNG;
-
-            DownloadFileResponse dfs = null;
             ActionResult resp = new EmptyResult();
 
-            try
+            ImageMeta ImageMeta = new ImageMeta
             {
-                dfs = this.FileClient.Get<DownloadFileResponse>
-                        (new DownloadDpRequest
-                        {
-                            ImageInfo = new ImageMeta
-                            {
-                                FileName = uid,
-                                FileType = StaticFileConstants.PNG,
-                                FileCategory = EbFileCategory.Dp
-                            }
-                        });
+                FileName = uid,
+                FileType = filetype,
+                FileCategory = EbFileCategory.Dp,
+            };
 
-                if (dfs.StreamWrapper != null)
+            if (IsNewFileServer)
+            {
+                try
                 {
-                    dfs.StreamWrapper.Memorystream.Position = 0;
-                    HttpContext.Response.Headers[HeaderNames.CacheControl] = "private, max-age=2628000";
-                    resp = new FileStreamResult(dfs.StreamWrapper.Memorystream, GetMime(fname));
+                    DownloadFileResponse2 dfs = this.FileClient2.DownloadFile(ImageMeta, "/download/image", this.IntSolutionId, Convert.ToInt32(uid));
+
+                    if (dfs?.FileBytes != null)
+                    {
+                        MemoryStream ms = new MemoryStream(dfs.FileBytes);
+                        ms.Position = 0;
+                        HttpContext.Response.Headers[HeaderNames.CacheControl] = "private, max-age=2628000";
+                        resp = new FileStreamResult(ms, GetMime(fname));
+                    }
+                    else if (dfs?.PreSignedUrl != null)
+                    {
+                        resp = Redirect(dfs.PreSignedUrl);
+                    }
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine("Exception: " + e.Message.ToString());
+                    resp = new EmptyResult();
                 }
             }
-            catch (Exception e)
+            else
             {
-                Console.WriteLine("Exception: " + e.Message.ToString());
-                resp = new EmptyResult();
+                DownloadFileResponse dfs = null;
+
+                try
+                {
+                    dfs = this.FileClient.Get<DownloadFileResponse>(new DownloadDpRequest { ImageInfo = ImageMeta });
+
+                    if (dfs.StreamWrapper != null)
+                    {
+                        dfs.StreamWrapper.Memorystream.Position = 0;
+                        HttpContext.Response.Headers[HeaderNames.CacheControl] = "private, max-age=2628000";
+                        resp = new FileStreamResult(dfs.StreamWrapper.Memorystream, GetMime(fname));
+                    }
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine("Exception: " + e.Message.ToString());
+                    resp = new EmptyResult();
+                }
             }
             return resp;
         }
 
-        [HttpGet("files/loc/{filename}")]
-        public IActionResult GetLocFiles(string filename)
-        {
-            filename = filename.SplitOnLast(CharConstants.DOT).First() + StaticFileConstants.DOTPNG;
+        //[HttpGet("files/loc/{filename}")]
+        //public IActionResult GetLocFiles(string filename)
+        //{
+        //    filename = filename.SplitOnLast(CharConstants.DOT).First() + StaticFileConstants.DOTPNG;
 
-            DownloadFileResponse dfs = null;
-            ActionResult resp = new EmptyResult();
+        //    DownloadFileResponse dfs = null;
+        //    ActionResult resp = new EmptyResult();
 
-            try
-            {
-                if (filename.StartsWith(StaticFileConstants.LOC))
-                {
-                    HttpContext.Response.Headers[HeaderNames.CacheControl] = "private, max-age=31536000";
+        //    try
+        //    {
+        //        if (filename.StartsWith(StaticFileConstants.LOC))
+        //        {
+        //            HttpContext.Response.Headers[HeaderNames.CacheControl] = "private, max-age=31536000";
 
-                    dfs = this.FileClient.Get<DownloadFileResponse>
-                            (new DownloadFileRequest
-                            {
-                                FileDetails = new FileMeta
-                                {
-                                    FileName = filename,
-                                    FileType = StaticFileConstants.PNG,
-                                    FileCategory = EbFileCategory.LocationFile
-                                }
-                            });
-                }
+        //            dfs = this.FileClient.Get<DownloadFileResponse>
+        //                    (new DownloadFileRequest
+        //                    {
+        //                        FileDetails = new FileMeta
+        //                        {
+        //                            FileName = filename,
+        //                            FileType = StaticFileConstants.PNG,
+        //                            FileCategory = EbFileCategory.LocationFile
+        //                        }
+        //                    });
+        //        }
 
-                if (dfs.StreamWrapper != null)
-                {
-                    dfs.StreamWrapper.Memorystream.Position = 0;
-                    resp = new FileStreamResult(dfs.StreamWrapper.Memorystream, GetMime(filename));
-                }
-            }
-            catch (Exception e)
-            {
-                Console.WriteLine("Exception: " + e.Message.ToString());
-                resp = new EmptyResult();
-            }
-            return resp;
-        }
+        //        if (dfs.StreamWrapper != null)
+        //        {
+        //            dfs.StreamWrapper.Memorystream.Position = 0;
+        //            resp = new FileStreamResult(dfs.StreamWrapper.Memorystream, GetMime(filename));
+        //        }
+        //    }
+        //    catch (Exception e)
+        //    {
+        //        Console.WriteLine("Exception: " + e.Message.ToString());
+        //        resp = new EmptyResult();
+        //    }
+        //    return resp;
+        //}
 
         [HttpGet("files/{filename}")]
         public IActionResult GetFile(string filename)
         {
-            DownloadFileResponse dfs = null;
-            HttpContext.Response.Headers[HeaderNames.CacheControl] = "private, max-age=31536000";
             ActionResult resp = new EmptyResult();
-
-            try
+            if (IsNewFileServer)
             {
-                dfs = this.FileClient.Get<DownloadFileResponse>
-                        (new DownloadFileByIdRequest
-                        {
-                            FileDetails = new FileMeta { FileRefId = Convert.ToInt32(filename.SplitOnLast(CharConstants.DOT).First()), FileCategory = EbFileCategory.File }
-                        });
-                if (dfs.StreamWrapper != null)
+                try
                 {
-                    dfs.StreamWrapper.Memorystream.Position = 0;
-                    resp = new FileStreamResult(dfs.StreamWrapper.Memorystream, GetMime(filename));
+                    FileMeta fileMeta = new FileMeta { FileRefId = Convert.ToInt32(filename.SplitOnLast(CharConstants.DOT).First()), FileCategory = EbFileCategory.File, FileName = filename };
+                    DownloadFileResponse2 dfs = this.FileClient2.DownloadFile(fileMeta, "/download/file", this.IntSolutionId);
+                    if (dfs?.FileBytes != null)
+                    {
+                        MemoryStream ms = new MemoryStream(dfs.FileBytes);
+                        ms.Position = 0;
+                        HttpContext.Response.Headers[HeaderNames.CacheControl] = "private, max-age=2628000";
+                        resp = new FileStreamResult(ms, GetMime(filename));
+                    }
+                    else if (dfs?.PreSignedUrl != null)
+                    {
+                        resp = Redirect(dfs.PreSignedUrl);
+                    }
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine("Exception: " + e.Message.ToString());
+                    resp = new EmptyResult();
                 }
             }
-            catch (Exception e)
+            else
             {
-                Console.WriteLine("Exception: " + e.Message.ToString());
+                DownloadFileResponse dfs = null;
+
+                try
+                {
+                    dfs = this.FileClient.Get<DownloadFileResponse>
+                            (new DownloadFileByIdRequest
+                            {
+                                FileDetails = new FileMeta { FileRefId = Convert.ToInt32(filename.SplitOnLast(CharConstants.DOT).First()), FileCategory = EbFileCategory.File }
+                            });
+                    if (dfs.StreamWrapper != null)
+                    {
+                        dfs.StreamWrapper.Memorystream.Position = 0;
+                        resp = new FileStreamResult(dfs.StreamWrapper.Memorystream, GetMime(filename));
+                    }
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine("Exception: " + e.Message.ToString());
+                }
             }
+            HttpContext.Response.Headers[HeaderNames.CacheControl] = "private, max-age=31536000";
+
             return resp;
         }
 
-        [HttpGet("files/ref/{filename}")]
-        public IActionResult GetFileByRefId(string filename)
-        {
-            DownloadFileResponse dfs = null;
-            HttpContext.Response.Headers[HeaderNames.CacheControl] = "private, max-age=31536000";
-            ActionResult resp = new EmptyResult();
-            try
-            {
-                dfs = this.FileClient.Get<DownloadFileResponse>
-                        (new DownloadFileByRefIdRequest
-                        {
-                            FileDetails = new FileMeta { FileRefId = Convert.ToInt32(filename.SplitOnLast(CharConstants.DOT).First()), FileCategory = EbFileCategory.File }
-                        });
-                if (dfs.StreamWrapper != null)
-                {
-                    dfs.StreamWrapper.Memorystream.Position = 0;
-                    resp = new FileStreamResult(dfs.StreamWrapper.Memorystream, GetMime(filename));
-                }
-            }
-            catch (Exception e)
-            {
-                Console.WriteLine("Exception: " + e.StackTrace.ToString() + e.Message.ToString());
-            }
-            return resp;
-        }
+        //[HttpGet("files/ref/{filename}")]
+        //public IActionResult GetFileByRefId(string filename)
+        //{
+        //    DownloadFileResponse dfs = null;
+        //    HttpContext.Response.Headers[HeaderNames.CacheControl] = "private, max-age=31536000";
+        //    ActionResult resp = new EmptyResult();
+        //    try
+        //    {
+        //        dfs = this.FileClient.Get<DownloadFileResponse>
+        //                (new DownloadFileByRefIdRequest
+        //                {
+        //                    FileDetails = new FileMeta { FileRefId = Convert.ToInt32(filename.SplitOnLast(CharConstants.DOT).First()), FileCategory = EbFileCategory.File }
+        //                });
+        //        if (dfs.StreamWrapper != null)
+        //        {
+        //            dfs.StreamWrapper.Memorystream.Position = 0;
+        //            resp = new FileStreamResult(dfs.StreamWrapper.Memorystream, GetMime(filename));
+        //        }
+        //    }
+        //    catch (Exception e)
+        //    {
+        //        Console.WriteLine("Exception: " + e.StackTrace.ToString() + e.Message.ToString());
+        //    }
+        //    return resp;
+        //}
 
         [HttpGet("images/{filename}")]
         public IActionResult GetImageById(string filename, string qlty)
         {
-            DownloadFileResponse dfs = null;
-            HttpContext.Response.Headers[HeaderNames.CacheControl] = "private, max-age=31536000";
             ActionResult resp = new EmptyResult();
-
-            DownloadImageByIdRequest dfq = new DownloadImageByIdRequest();
-
-            try
+            if (IsNewFileServer)
             {
-                dfq.ImageInfo = new ImageMeta { FileRefId = Convert.ToInt32(filename.SplitOnLast(CharConstants.DOT).First()), FileCategory = EbFileCategory.Images, ImageQuality = ImageQuality.original };
-
-                Console.WriteLine("Image Info: " + dfq.ImageInfo.ToString());
-
-                dfs = this.FileClient.Get<DownloadFileResponse>(dfq);
-
-                if (dfs.StreamWrapper != null)
+                try
                 {
-                    Console.WriteLine("Image Size: " + dfs.StreamWrapper.Memorystream.Length);
+                    ImageMeta ImageMeta = new ImageMeta
+                    {
+                        FileName = filename,
+                        FileRefId = Convert.ToInt32(filename.SplitOnLast(CharConstants.DOT).First()),
+                        FileCategory = EbFileCategory.Images,
+                        ImageQuality = ImageQuality.original
+                    };
 
-                    dfs.StreamWrapper.Memorystream.Position = 0;
-                    resp = new FileStreamResult(dfs.StreamWrapper.Memorystream, GetMime(filename));
+                    DownloadFileResponse2 dfs = this.FileClient2.DownloadFile(ImageMeta, "/download/image", this.IntSolutionId);
+
+                    if (dfs?.FileBytes != null)
+                    {
+                        MemoryStream ms = new MemoryStream(dfs.FileBytes);
+                        ms.Position = 0;
+                        resp = new FileStreamResult(ms, StaticFileConstants.GetMimeType(filename));
+                    }
+                    else if (dfs?.PreSignedUrl != null)
+                    {
+                        resp = Redirect(dfs.PreSignedUrl);
+                    }
                 }
-
+                catch (Exception e)
+                {
+                    Console.WriteLine("Exception: " + e.Message.ToString());
+                }
             }
-            catch (Exception e)
+            else
             {
-                Console.WriteLine("Exception: " + e.StackTrace.ToString() + e.Message.ToString());
+                try
+                {
+                    DownloadImageByIdRequest dfq = new DownloadImageByIdRequest();
+                    DownloadFileResponse dfs = null;
+                    dfq.ImageInfo = new ImageMeta { FileRefId = Convert.ToInt32(filename.SplitOnLast(CharConstants.DOT).First()), FileCategory = EbFileCategory.Images, ImageQuality = ImageQuality.original };
+
+                    Console.WriteLine("Image Info: " + dfq.ImageInfo.ToString());
+
+                    dfs = this.FileClient.Get<DownloadFileResponse>(dfq);
+
+                    if (dfs.StreamWrapper != null)
+                    {
+                        Console.WriteLine("Image Size: " + dfs.StreamWrapper.Memorystream.Length);
+
+                        dfs.StreamWrapper.Memorystream.Position = 0;
+                        resp = new FileStreamResult(dfs.StreamWrapper.Memorystream, GetMime(filename));
+                    }
+
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine("Exception: " + e.Message.ToString());
+                }
             }
+            HttpContext.Response.Headers[HeaderNames.CacheControl] = "private, max-age=31536000";
+
             return resp;
         }
 
         [HttpGet("images/{qlty}/{filename}")]
         public IActionResult GetImageQualById(string filename, string qlty)
         {
-            DownloadFileResponse dfs = null;
-            HttpContext.Response.Headers[HeaderNames.CacheControl] = "private, max-age=31536000";
             ActionResult resp = new EmptyResult();
-
-            DownloadImageByIdRequest dfq = new DownloadImageByIdRequest();
-
-            try
+            if (IsNewFileServer)
             {
-                dfq.ImageInfo = new ImageMeta { FileRefId = Convert.ToInt32(filename.SplitOnLast(CharConstants.DOT).First()), FileCategory = EbFileCategory.Images, ImageQuality = Enum.Parse<ImageQuality>(qlty) };
-                
-                Console.WriteLine("Image Info: " + dfq.ImageInfo.ToJson());
-
-                this.FileClient.Timeout = new TimeSpan(0, 5, 0);
-
-                dfs = this.FileClient.Get<DownloadFileResponse>(dfq);
-
-                if (dfs.StreamWrapper != null)
+                try
                 {
-                    Console.WriteLine("Image Size: " + dfs.StreamWrapper.Memorystream.Length);
+                    ImageMeta ImageMeta = new ImageMeta
+                    {
+                        FileName = filename,
+                        FileRefId = Convert.ToInt32(filename.SplitOnLast(CharConstants.DOT).First()),
+                        FileCategory = EbFileCategory.Images,
+                        ImageQuality = Enum.Parse<ImageQuality>(qlty)
+                    };
 
-                    dfs.StreamWrapper.Memorystream.Position = 0;
-                    resp = new FileStreamResult(dfs.StreamWrapper.Memorystream, GetMime(filename));
+                    DownloadFileResponse2 dfs = this.FileClient2.DownloadFile(ImageMeta, "/download/image", this.IntSolutionId, 0, null, ImageMeta.ImageQuality);
+
+                    if (dfs?.FileBytes != null)
+                    {
+                        MemoryStream ms = new MemoryStream(dfs.FileBytes);
+                        ms.Position = 0;
+                        resp = new FileStreamResult(ms, StaticFileConstants.GetMimeType(filename));
+                    }
+                    else if (dfs?.PreSignedUrl != null)
+                    {
+                        resp = Redirect(dfs.PreSignedUrl);
+                    }
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine("Exception: " + e.Message.ToString());
                 }
             }
-            catch (Exception e)
+            else
             {
-                Console.WriteLine("Exception: " + e.StackTrace.ToString() + e.Message.ToString());
-            }
-            return resp;
+                DownloadFileResponse dfs = null;
 
+                DownloadImageByIdRequest dfq = new DownloadImageByIdRequest();
+
+                try
+                {
+                    dfq.ImageInfo = new ImageMeta { FileRefId = Convert.ToInt32(filename.SplitOnLast(CharConstants.DOT).First()), FileCategory = EbFileCategory.Images, ImageQuality = Enum.Parse<ImageQuality>(qlty) };
+
+                    this.FileClient.Timeout = new TimeSpan(0, 5, 0);
+
+                    dfs = this.FileClient.Get<DownloadFileResponse>(dfq);
+
+                    if (dfs.StreamWrapper != null)
+                    {
+                        dfs.StreamWrapper.Memorystream.Position = 0;
+                        resp = new FileStreamResult(dfs.StreamWrapper.Memorystream, GetMime(filename));
+                    }
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine("Exception: " + e.Message.ToString());
+                }
+            }
+
+            HttpContext.Response.Headers[HeaderNames.CacheControl] = "private, max-age=31536000";
+
+            return resp;
         }
 
         //[HttpPost]
